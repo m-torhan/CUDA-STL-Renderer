@@ -2,7 +2,7 @@
 #include <vector>
 #include <string>
 
-#include "Triangle.h"
+#include "Triangle.cuh"
 
 constexpr size_t max_triangles = 1024;
 
@@ -18,7 +18,7 @@ static void HandleError(cudaError_t err, const char* file, int line) {
 #define HANDLE_ERROR(err) (HandleError(err, __FILE__, __LINE__))
 
 template<typename T>
-T min(T a, T b) {
+__host__ __device__ T min(T a, T b) {
     return a > b ? b : a;
 }
 

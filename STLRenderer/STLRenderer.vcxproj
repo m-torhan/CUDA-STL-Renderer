@@ -55,7 +55,10 @@
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
+      <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
     </CudaCompile>
+    <CudaLink />
+    <CudaLink />
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -74,20 +77,23 @@
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
+      <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
     </CudaCompile>
+    <CudaLink />
+    <CudaLink />
   </ItemDefinitionGroup>
   <ItemGroup>
     <CudaCompile Include="main.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Point.h" />
-    <ClInclude Include="Triangle.h" />
-    <ClInclude Include="Utils.h" />
+    <CudaCompile Include="Point.cuh" />
+    <CudaCompile Include="Triangle.cuh" />
+    <CudaCompile Include="Utils.cuh" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Point.cpp" />
-    <ClCompile Include="Triangle.cpp" />
-    <ClCompile Include="Utils.cpp" />
+    <CudaCompile Include="Point.cu" />
+    <CudaCompile Include="Triangle.cu" />
+    <CudaCompile Include="Utils.cu" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

@@ -12,29 +12,66 @@
 #include <math.h>
 #include <thrust/complex.h>
 
-#include "Utils.h"
+#include "Utils.cuh"
+#include "Triangle.cuh"
+#include "Point.cuh"
 
 constexpr int window_size{ 768 };
-constexpr int max_iter{ 1024 };
-constexpr float zoom_speed{ 2.0f };
+constexpr int max_fps{ 60 };
 
 GLuint bufferObj;
 cudaGraphicsResource *resource;
-uchar4* dev_resource;
+uchar4 *dev_resource;
 
 int mouse_pos[2]{ 0, 0 };
 
 bool update_required{ false };
 bool initial_draw{ true };
 
-__constant__ Triangle object[max_triangles];
-uint32_t triangles_count;
+uint32_t *triangles_count;
+Point *origin;
+Point *direction;
 
-Point origin;
-Point direction;
+//__constant__ Triangle object[max_triangles];
+Triangle *dev_object;
+uint32_t *dev_triangles_count;
+Point *dev_origin;
+Point *dev_direction;
 
-__global__ void ray_trace_kernel(uchar4 *pixel, Triangle *triangles, uint32_t triangles_count, Point origin, Point direction) {
+__global__ void ray_trace_kernel(uchar4 *pixel, Triangle *triangles, uint32_t *triangles_count, Point *origin, Point *direction) {
+    // map from threadIdx/BlockIdx to pixel position
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+    int y = threadIdx.y + blockIdx.y * blockDim.y;
+    int offset = x + y * blockDim.x * gridDim.x;
 
+    Point direction_right = Point(direction->y, direction->x, 0);
+    direction_right /= direction_right.length();
+    Point direction_up = direction_right.cross_product(*direction);
+    direction_up /= direction_up.length();
+
+    Point ray_origin = *origin;
+    Point ray_direction = *direction + 
+        direction_right * (x - window_size / 2) +
+        direction_up * (y - window_size / 2);
+
+    ray_direction /= ray_direction.length();
+
+    float min_distance = INFINITY;
+    const Triangle *closest_triangle = nullptr;
+
+    for (int i{ 0 }; i < (*triangles_count); ++i) {
+        HitData hit = triangles[i].Hit(ray_origin, ray_direction);
+        if (hit.hit && hit.distance < min_distance) {
+            closest_triangle = &triangles[i];
+        }
+    }
+
+    if (nullptr != closest_triangle) {
+        pixel[offset] = OBJECT_COLOR;
+    }
+    else {
+        pixel[offset] = BACKGROUND_COLOR;
+    }
 }
 
 static void cuda_compute_frame(void) {
@@ -54,7 +91,7 @@ static void cuda_compute_frame(void) {
     dim3 grids(window_size / 16, window_size / 16);
     dim3 threads(16, 16);
 
-    ray_trace_kernel<<<grids, threads>>>(dev_resource, object, triangles_count, origin, direction);
+    ray_trace_kernel<<<grids, threads>>>(dev_resource, dev_object, dev_triangles_count, dev_origin, dev_direction);
 
     HANDLE_ERROR(cudaEventRecord(stop, 0));
     HANDLE_ERROR(cudaEventSynchronize(stop));
@@ -112,6 +149,9 @@ static void idle_func(void) {
 
     delta_time = (glutGet(GLUT_ELAPSED_TIME) - time) / 1000.0f;
     time = glutGet(GLUT_ELAPSED_TIME);
+
+    cuda_compute_frame();
+    glutPostRedisplay();
 }
 
 static void resize_func(int width, int height) {
@@ -150,7 +190,30 @@ int main(int argc, char *argv[])
 
     HANDLE_ERROR(cudaGraphicsGLRegisterBuffer(&resource, bufferObj, cudaGraphicsRegisterFlagsWriteDiscard));
 
-    HANDLE_ERROR(cudaMemcpyToSymbol(object, temp_object.data(), sizeof(Triangle) * min(max_triangles, temp_object.size())));
+    //HANDLE_ERROR(cudaMemcpyToSymbol(object, temp_object.data(), sizeof(Triangle) * min(max_triangles, temp_object.size())));
+
+    HANDLE_ERROR(cudaMalloc((void**)&dev_object, sizeof(Triangle) * temp_object.size()));
+
+    HANDLE_ERROR(cudaMemcpy(dev_object, temp_object.data(), sizeof(Triangle) * min(max_triangles, temp_object.size()), cudaMemcpyHostToDevice));
+
+    HANDLE_ERROR(cudaHostAlloc((void**)&triangles_count, sizeof(uint32_t), cudaHostAllocWriteCombined | cudaHostAllocMapped));
+    HANDLE_ERROR(cudaHostAlloc((void**)&origin, sizeof(Point), cudaHostAllocWriteCombined | cudaHostAllocMapped));
+    HANDLE_ERROR(cudaHostAlloc((void**)&direction, sizeof(Point), cudaHostAllocWriteCombined | cudaHostAllocMapped));
+
+    *triangles_count = min(max_triangles, temp_object.size());
+    printf("Triangles count: %d\n", *triangles_count);
+
+    origin->x = -100;
+    origin->y = 0;
+    origin->z = 0;
+
+    direction->x = 100;
+    direction->y = 0;
+    direction->z = 0;
+
+    HANDLE_ERROR(cudaHostGetDevicePointer(&dev_triangles_count, triangles_count, 0));
+    HANDLE_ERROR(cudaHostGetDevicePointer(&dev_origin, origin, 0));
+    HANDLE_ERROR(cudaHostGetDevicePointer(&dev_direction, direction, 0));
 
     glutKeyboardFunc(key_func);
     glutDisplayFunc(draw_func);
