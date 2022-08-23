@@ -45,9 +45,9 @@ __global__ void ray_trace_kernel(uchar4 *pixel, Triangle *triangles, uint32_t *t
     int offset = x + y * blockDim.x * gridDim.x;
 
     Point direction_right = Point(direction->y, direction->x, 0);
-    direction_right /= direction_right.length();
+    direction_right /= 16 * direction_right.length();
     Point direction_up = direction_right.cross_product(*direction);
-    direction_up /= direction_up.length();
+    direction_up /= 16 * direction_up.length();
 
     Point ray_origin = *origin;
     Point ray_direction = *direction + 
@@ -59,8 +59,9 @@ __global__ void ray_trace_kernel(uchar4 *pixel, Triangle *triangles, uint32_t *t
     float min_distance = INFINITY;
     const Triangle *closest_triangle = nullptr;
 
+    HitData hit;
     for (int i{ 0 }; i < (*triangles_count); ++i) {
-        HitData hit = triangles[i].Hit(ray_origin, ray_direction);
+        hit = triangles[i].Hit(ray_origin, ray_direction);
         if (hit.hit && hit.distance < min_distance) {
             closest_triangle = &triangles[i];
         }
@@ -68,6 +69,9 @@ __global__ void ray_trace_kernel(uchar4 *pixel, Triangle *triangles, uint32_t *t
 
     if (nullptr != closest_triangle) {
         pixel[offset] = OBJECT_COLOR;
+        pixel[offset].x *= hit.angle_cos;
+        pixel[offset].y *= hit.angle_cos;
+        pixel[offset].z *= hit.angle_cos;
     }
     else {
         pixel[offset] = BACKGROUND_COLOR;
@@ -98,7 +102,11 @@ static void cuda_compute_frame(void) {
 
     float elapsedTime;
     HANDLE_ERROR(cudaEventElapsedTime(&elapsedTime, start, stop));
+
     printf("\r%3.0f fps", 1000 / elapsedTime);
+
+    printf("   %07.3f %07.3f %07.3f ", origin->x, origin->y, origin->z);
+    printf("   %07.3f %07.3f %07.3f ", direction->x, direction->y, direction->z);
 
     HANDLE_ERROR(cudaGraphicsUnmapResources(1, &resource, NULL));
 }
@@ -149,6 +157,16 @@ static void idle_func(void) {
 
     delta_time = (glutGet(GLUT_ELAPSED_TIME) - time) / 1000.0f;
     time = glutGet(GLUT_ELAPSED_TIME);
+
+    constexpr float radius = 40.0f;
+
+    direction->x = 20.0 * sin(time / 1000);
+    direction->y = 20.0 * cos(time / 1000);
+
+    printf(" [%f] ", direction->length());
+
+    origin->x = -radius * sin(time / 1000);
+    origin->y = -radius * cos(time / 1000);
 
     cuda_compute_frame();
     glutPostRedisplay();
@@ -203,11 +221,11 @@ int main(int argc, char *argv[])
     *triangles_count = min(max_triangles, temp_object.size());
     printf("Triangles count: %d\n", *triangles_count);
 
-    origin->x = -100;
+    origin->x = 0;
     origin->y = 0;
     origin->z = 0;
 
-    direction->x = 100;
+    direction->x = 0;
     direction->y = 0;
     direction->z = 0;
 

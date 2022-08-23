@@ -2,11 +2,10 @@
 #include "Utils.cuh"
 
 HitData Triangle::Hit(const Point& ray_begin, const Point& ray_direction) const {
-	HitData result{ false, 0 };
+	HitData result{ false, 0, 0 };
 
 	// normal in point a
 	Point normal = (b - a).cross_product(c - a);
-
 	// intersection point of triangle's plane and ray
 	Point q = ray_begin + ((a - ray_begin).dot_product(normal) / ray_direction.dot_product(normal)) * ray_direction;
 
@@ -22,6 +21,7 @@ HitData Triangle::Hit(const Point& ray_begin, const Point& ray_direction) const 
 	// if all signs of dot products are - or + then point q lays on the same side of vectors ab, bc and ca
 	if (3 == abs(sign_sum)) {
 		result.hit = true;
+		result.angle_cos = abs(ray_direction.dot_product(normal) / (ray_direction.length() * normal.length()));
 		result.distance = (q - ray_begin).length();
 	}
 

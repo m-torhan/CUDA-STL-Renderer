@@ -10,7 +10,7 @@ public:
 
 	__host__ __device__ constexpr Point() = default;
 	__host__ __device__ Point(const Point& other) = default;
-	__host__ __device__ Point(float _x, float _y, float _z) : x(_z), y(_y), z(_z) {};
+	__host__ __device__ Point(float _x, float _y, float _z) : x(_x), y(_y), z(_z) {};
 
 	__host__ __device__ const Point& operator=(const Point& other);
 

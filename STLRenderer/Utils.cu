@@ -68,7 +68,7 @@ std::vector<Triangle> read_stl_binary(const std::string& filename) {
 
 	Point mid_coords = (min_coords + max_coords) / 2;
 
-	for (auto triangle : triangles) {
+	for (Triangle& triangle : triangles) {
 		triangle.a.x -= mid_coords.x;
 		triangle.a.y -= mid_coords.y;
 		triangle.a.z -= mid_coords.z;

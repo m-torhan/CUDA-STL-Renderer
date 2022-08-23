@@ -7,6 +7,7 @@ class Triangle;
 
 typedef struct {
 	bool hit;
+	float angle_cos;
 	float distance;
 } HitData;
 

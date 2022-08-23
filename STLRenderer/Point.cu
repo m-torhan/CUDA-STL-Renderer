@@ -34,7 +34,7 @@ Point& Point::operator-=(const Point& other) {
 }
 
 const Point Point::operator-(const Point& other) const {
-	return Point(x + other.x, y - other.y, z - other.z);
+	return Point(x - other.x, y - other.y, z - other.z);
 }
 
 Point& Point::operator*=(float number) {
