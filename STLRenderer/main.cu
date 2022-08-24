@@ -32,46 +32,47 @@ uint32_t *triangles_count;
 Point *origin;
 Point *direction;
 
-//__constant__ Triangle object[max_triangles];
-Triangle *dev_object;
+__constant__ Triangle object[max_triangles];
 uint32_t *dev_triangles_count;
 Point *dev_origin;
 Point *dev_direction;
 
-__global__ void ray_trace_kernel(uchar4 *pixel, Triangle *triangles, uint32_t *triangles_count, Point *origin, Point *direction) {
+__global__ void ray_trace_kernel(uchar4 *pixel, uint32_t *triangles_count, Point *origin, Point *direction) {
     // map from threadIdx/BlockIdx to pixel position
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;
     int offset = x + y * blockDim.x * gridDim.x;
 
-    Point direction_right = Point(direction->y, direction->x, 0);
+    Point direction_right = Point(direction->y, -direction->x, 0);
     direction_right /= 16 * direction_right.length();
     Point direction_up = direction_right.cross_product(*direction);
     direction_up /= 16 * direction_up.length();
 
     Point ray_origin = *origin;
     Point ray_direction = *direction + 
-        direction_right * (x - window_size / 2) +
-        direction_up * (y - window_size / 2);
+        direction_right * (x - window_size / 2) / window_size +
+        direction_up * (window_size / 2 - y) / window_size;
 
     ray_direction /= ray_direction.length();
 
-    float min_distance = INFINITY;
     const Triangle *closest_triangle = nullptr;
+    HitData closest_hit;
+    closest_hit.hit = false;
 
     HitData hit;
     for (int i{ 0 }; i < (*triangles_count); ++i) {
-        hit = triangles[i].Hit(ray_origin, ray_direction);
-        if (hit.hit && hit.distance < min_distance) {
-            closest_triangle = &triangles[i];
+        hit = object[i].Hit(ray_origin, ray_direction);
+        if (hit.hit && (!closest_hit.hit || (hit.distance < closest_hit.distance))) {
+            closest_triangle = &object[i];
+            closest_hit = hit;
         }
     }
 
     if (nullptr != closest_triangle) {
         pixel[offset] = OBJECT_COLOR;
-        pixel[offset].x *= hit.angle_cos;
-        pixel[offset].y *= hit.angle_cos;
-        pixel[offset].z *= hit.angle_cos;
+        pixel[offset].x *= closest_hit.angle_cos;
+        pixel[offset].y *= closest_hit.angle_cos;
+        pixel[offset].z *= closest_hit.angle_cos;
     }
     else {
         pixel[offset] = BACKGROUND_COLOR;
@@ -95,7 +96,7 @@ static void cuda_compute_frame(void) {
     dim3 grids(window_size / 16, window_size / 16);
     dim3 threads(16, 16);
 
-    ray_trace_kernel<<<grids, threads>>>(dev_resource, dev_object, dev_triangles_count, dev_origin, dev_direction);
+    ray_trace_kernel<<<grids, threads>>>(dev_resource, dev_triangles_count, dev_origin, dev_direction);
 
     HANDLE_ERROR(cudaEventRecord(stop, 0));
     HANDLE_ERROR(cudaEventSynchronize(stop));
@@ -158,15 +159,18 @@ static void idle_func(void) {
     delta_time = (glutGet(GLUT_ELAPSED_TIME) - time) / 1000.0f;
     time = glutGet(GLUT_ELAPSED_TIME);
 
-    constexpr float radius = 40.0f;
+    constexpr float rotation_radius = 500.0f;
+    constexpr float direction_radius = 1.0f;
 
-    direction->x = 20.0 * sin(time / 1000);
-    direction->y = 20.0 * cos(time / 1000);
+    direction->x = direction_radius * sin(time / 1000);
+    direction->y = direction_radius * cos(time / 1000);
+    direction->z = direction_radius * cos(time / 2000);
 
     printf(" [%f] ", direction->length());
 
-    origin->x = -radius * sin(time / 1000);
-    origin->y = -radius * cos(time / 1000);
+    origin->x = -rotation_radius * sin(time / 1000);
+    origin->y = -rotation_radius * cos(time / 1000);
+    origin->z = -rotation_radius * cos(time / 2000);
 
     cuda_compute_frame();
     glutPostRedisplay();
@@ -208,11 +212,7 @@ int main(int argc, char *argv[])
 
     HANDLE_ERROR(cudaGraphicsGLRegisterBuffer(&resource, bufferObj, cudaGraphicsRegisterFlagsWriteDiscard));
 
-    //HANDLE_ERROR(cudaMemcpyToSymbol(object, temp_object.data(), sizeof(Triangle) * min(max_triangles, temp_object.size())));
-
-    HANDLE_ERROR(cudaMalloc((void**)&dev_object, sizeof(Triangle) * temp_object.size()));
-
-    HANDLE_ERROR(cudaMemcpy(dev_object, temp_object.data(), sizeof(Triangle) * min(max_triangles, temp_object.size()), cudaMemcpyHostToDevice));
+    HANDLE_ERROR(cudaMemcpyToSymbol(object, temp_object.data(), sizeof(Triangle) * min(max_triangles, temp_object.size())));
 
     HANDLE_ERROR(cudaHostAlloc((void**)&triangles_count, sizeof(uint32_t), cudaHostAllocWriteCombined | cudaHostAllocMapped));
     HANDLE_ERROR(cudaHostAlloc((void**)&origin, sizeof(Point), cudaHostAllocWriteCombined | cudaHostAllocMapped));

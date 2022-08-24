@@ -82,13 +82,13 @@ std::vector<Triangle> read_stl_binary(const std::string& filename) {
 		triangle.c.z -= mid_coords.z;
 	}
 
-	printf("Loaded triangles:\n");
+	/*printf("Loaded triangles:\n");
 
 	for (auto triangle : triangles) {
 		printf("  (%0.3f, %0.3f, %0.3f), ", triangle.a.x, triangle.a.y, triangle.a.z);
 		printf("(%0.3f, %0.3f, %0.3f), ", triangle.b.x, triangle.b.y, triangle.b.z);
 		printf("(%0.3f, %0.3f, %0.3f)\n", triangle.c.x, triangle.c.y, triangle.c.z);
-	}
+	}*/
 
 	fclose(stl_file);
 
