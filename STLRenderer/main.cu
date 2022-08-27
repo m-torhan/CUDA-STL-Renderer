@@ -27,7 +27,7 @@ GLuint buffer_obj;
 
 struct {
     Quaternion rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
-    float distance{ 1000.0f };
+    float distance{ 100.0f };
 } view;
 
 struct {
@@ -40,32 +40,31 @@ cudaGraphicsResource *opengl_resource;
 struct {
     uint32_t *triangles_count;
     Point *origin;
-    Point *direction;
+    Quaternion *rotation;
 } host_data;
 
 __constant__ Triangle object[max_triangles];
 struct {
     uint32_t *triangles_count;
     Point *origin;
-    Point *direction;
+    Quaternion *rotation;
     uchar4 *resource;
 } device_data;
 
-__global__ void ray_trace_kernel(uchar4 *pixel, uint32_t *triangles_count, Point *origin, Point *direction) {
+__global__ void ray_trace_kernel(uchar4 *pixel, uint32_t *triangles_count, Point *origin, Quaternion *rotation) {
     // map from threadIdx/BlockIdx to pixel position
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;
     int offset = x + y * blockDim.x * gridDim.x;
 
-    Point direction_right = Point(direction->y, -direction->x, 0);
-    direction_right /= 16 * direction_right.length();
-    Point direction_up = direction_right.cross_product(*direction);
-    direction_up /= 16 * direction_up.length();
+    Point direction_forward =   rotation->rotate(Point(1, 0, 0));
+    Point direction_right =     rotation->rotate(Point(0, 1, 0));
+    Point direction_up =        rotation->rotate(Point(0, 0, 1));
 
     Point ray_origin = *origin;
-    Point ray_direction = *direction + 
-        direction_right * (x - window_size / 2) / window_size +
-        direction_up * (window_size / 2 - y) / window_size;
+    Point ray_direction = direction_forward +
+        direction_up * (x - window_size / 2) / window_size +
+        direction_right * (window_size / 2 - y) / window_size;
 
     ray_direction /= ray_direction.length();
 
@@ -110,7 +109,7 @@ static void cuda_compute_frame(void) {
     dim3 grids(window_size / 16, window_size / 16);
     dim3 threads(16, 16);
 
-    ray_trace_kernel<<<grids, threads>>>(device_data.resource, device_data.triangles_count, device_data.origin, device_data.direction);
+    ray_trace_kernel<<<grids, threads>>>(device_data.resource, device_data.triangles_count, device_data.origin, device_data.rotation);
 
     HANDLE_ERROR(cudaEventRecord(stop, 0));
     HANDLE_ERROR(cudaEventSynchronize(stop));
@@ -118,10 +117,7 @@ static void cuda_compute_frame(void) {
     float elapsedTime;
     HANDLE_ERROR(cudaEventElapsedTime(&elapsedTime, start, stop));
 
-    printf("\r%3.0f fps", 1000 / elapsedTime);
-
-    printf("   %07.3f %07.3f %07.3f ", host_data.origin->x, host_data.origin->y, host_data.origin->z);
-    printf("   %07.3f %07.3f %07.3f ", host_data.direction->x, host_data.direction->y, host_data.direction->z);
+    printf("\r%3.0f fps ", 1000 / elapsedTime);
 
     HANDLE_ERROR(cudaGraphicsUnmapResources(1, &opengl_resource, NULL));
 }
@@ -169,10 +165,10 @@ static void motion_func(int x, int y) {
     float delta_x = x - prev_mouse_pos.x;
     float delta_y = y - prev_mouse_pos.y;
 
-    Point direction_up = view.rotation.rotate(Point(0, 1, 0));
-    Point direction_right = view.rotation.rotate(Point(0, 0, 1));
+    Point direction_up = Point(0, 0, 1);
+    Point direction_right = Point(0, 1, 0);
        
-    view.rotation *= Quaternion(direction_up, -rotation_rate * delta_y / window_size)
+    view.rotation *= Quaternion(direction_up, rotation_rate * delta_y / window_size)
                    * Quaternion(direction_right, -rotation_rate * delta_x / window_size);
 
     prev_mouse_pos.x = x;
@@ -186,10 +182,8 @@ static void idle_func(void) {
     delta_time = (glutGet(GLUT_ELAPSED_TIME) - time) / 1000.0f;
     time = glutGet(GLUT_ELAPSED_TIME);
 
-    *host_data.direction = view.rotation.rotate(Point(1, 0, 0));
-    *host_data.direction /= host_data.direction->length();
-    *host_data.origin = -(*host_data.direction) * view.distance;
-    *host_data.origin *= view.distance / host_data.origin->length();
+    *host_data.rotation = view.rotation;
+    *host_data.origin = view.rotation.rotate(Point(-1, 0, 0)) * view.distance;
 
     cuda_compute_frame();
     glutPostRedisplay();
@@ -235,7 +229,7 @@ int main(int argc, char *argv[])
 
     HANDLE_ERROR(cudaHostAlloc((void**)&host_data.triangles_count, sizeof(uint32_t), cudaHostAllocWriteCombined | cudaHostAllocMapped));
     HANDLE_ERROR(cudaHostAlloc((void**)&host_data.origin, sizeof(Point), cudaHostAllocWriteCombined | cudaHostAllocMapped));
-    HANDLE_ERROR(cudaHostAlloc((void**)&host_data.direction, sizeof(Point), cudaHostAllocWriteCombined | cudaHostAllocMapped));
+    HANDLE_ERROR(cudaHostAlloc((void**)&host_data.rotation, sizeof(Quaternion), cudaHostAllocWriteCombined | cudaHostAllocMapped));
 
     *host_data.triangles_count = min(max_triangles, temp_object.size());
     printf("Triangles count: %d\n", *host_data.triangles_count);
@@ -244,13 +238,14 @@ int main(int argc, char *argv[])
     host_data.origin->y = 0;
     host_data.origin->z = 0;
 
-    host_data.direction->x = 0;
-    host_data.direction->y = 0;
-    host_data.direction->z = 0;
+    host_data.rotation->x = 1;
+    host_data.rotation->i = 0;
+    host_data.rotation->j = 0;
+    host_data.rotation->k = 0;
 
     HANDLE_ERROR(cudaHostGetDevicePointer(&device_data.triangles_count, host_data.triangles_count, 0));
     HANDLE_ERROR(cudaHostGetDevicePointer(&device_data.origin, host_data.origin, 0));
-    HANDLE_ERROR(cudaHostGetDevicePointer(&device_data.direction, host_data.direction, 0));
+    HANDLE_ERROR(cudaHostGetDevicePointer(&device_data.rotation, host_data.rotation, 0));
 
     glutKeyboardFunc(key_func);
     glutDisplayFunc(draw_func);
