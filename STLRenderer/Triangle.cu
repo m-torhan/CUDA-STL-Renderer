@@ -6,6 +6,11 @@ HitData Triangle::Hit(const Point& ray_begin, const Point& ray_direction) const 
 
 	// normal in point a
 	Point normal = (b - a).cross_product(c - a);
+
+	if (normal.dot_product(ray_direction) > 0) {
+		return result;
+	}
+
 	// intersection point of triangle's plane and ray
 	Point q = ray_begin + ((a - ray_begin).dot_product(normal) / ray_direction.dot_product(normal)) * ray_direction;
 

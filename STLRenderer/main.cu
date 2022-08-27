@@ -15,27 +15,41 @@
 #include "Utils.cuh"
 #include "Triangle.cuh"
 #include "Point.cuh"
+#include "Quaternion.cuh"
 
 constexpr int window_size{ 768 };
 constexpr int max_fps{ 60 };
 
-GLuint bufferObj;
-cudaGraphicsResource *resource;
-uchar4 *dev_resource;
+constexpr float rotation_rate{ 2.0f };
+constexpr float zoom_rate{ 1.2f };
 
-int mouse_pos[2]{ 0, 0 };
+GLuint buffer_obj;
 
-bool update_required{ false };
-bool initial_draw{ true };
+struct {
+    Quaternion rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+    float distance{ 1000.0f };
+} view;
 
-uint32_t *triangles_count;
-Point *origin;
-Point *direction;
+struct {
+    int x;
+    int y;
+} prev_mouse_pos;
+
+cudaGraphicsResource *opengl_resource;
+
+struct {
+    uint32_t *triangles_count;
+    Point *origin;
+    Point *direction;
+} host_data;
 
 __constant__ Triangle object[max_triangles];
-uint32_t *dev_triangles_count;
-Point *dev_origin;
-Point *dev_direction;
+struct {
+    uint32_t *triangles_count;
+    Point *origin;
+    Point *direction;
+    uchar4 *resource;
+} device_data;
 
 __global__ void ray_trace_kernel(uchar4 *pixel, uint32_t *triangles_count, Point *origin, Point *direction) {
     // map from threadIdx/BlockIdx to pixel position
@@ -82,9 +96,9 @@ __global__ void ray_trace_kernel(uchar4 *pixel, uint32_t *triangles_count, Point
 static void cuda_compute_frame(void) {
     size_t size;
 
-    HANDLE_ERROR(cudaGraphicsMapResources(1, &resource, NULL));
+    HANDLE_ERROR(cudaGraphicsMapResources(1, &opengl_resource, NULL));
 
-    HANDLE_ERROR(cudaGraphicsResourceGetMappedPointer((void**)&dev_resource, &size, resource));
+    HANDLE_ERROR(cudaGraphicsResourceGetMappedPointer((void**)&device_data.resource, &size, opengl_resource));
 
     cudaEvent_t start, stop;
 
@@ -96,7 +110,7 @@ static void cuda_compute_frame(void) {
     dim3 grids(window_size / 16, window_size / 16);
     dim3 threads(16, 16);
 
-    ray_trace_kernel<<<grids, threads>>>(dev_resource, dev_triangles_count, dev_origin, dev_direction);
+    ray_trace_kernel<<<grids, threads>>>(device_data.resource, device_data.triangles_count, device_data.origin, device_data.direction);
 
     HANDLE_ERROR(cudaEventRecord(stop, 0));
     HANDLE_ERROR(cudaEventSynchronize(stop));
@@ -106,10 +120,10 @@ static void cuda_compute_frame(void) {
 
     printf("\r%3.0f fps", 1000 / elapsedTime);
 
-    printf("   %07.3f %07.3f %07.3f ", origin->x, origin->y, origin->z);
-    printf("   %07.3f %07.3f %07.3f ", direction->x, direction->y, direction->z);
+    printf("   %07.3f %07.3f %07.3f ", host_data.origin->x, host_data.origin->y, host_data.origin->z);
+    printf("   %07.3f %07.3f %07.3f ", host_data.direction->x, host_data.direction->y, host_data.direction->z);
 
-    HANDLE_ERROR(cudaGraphicsUnmapResources(1, &resource, NULL));
+    HANDLE_ERROR(cudaGraphicsUnmapResources(1, &opengl_resource, NULL));
 }
 
 static void draw_func(void) {
@@ -123,22 +137,26 @@ static void key_func(unsigned char key, int x, int y) {
         // clean up OpenGL and CUDA
 
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
-        glDeleteBuffers(1, &bufferObj);
+        glDeleteBuffers(1, &buffer_obj);
 
-        HANDLE_ERROR(cudaGraphicsUnregisterResource(resource));
+        HANDLE_ERROR(cudaGraphicsUnregisterResource(opengl_resource));
         exit(0);
     }
 }
 
 static void mouse_func(int button, int state, int x, int y) {
-    mouse_pos[0] = x;
-    mouse_pos[1] = y;
     switch (state) {
     case GLUT_DOWN:
         switch (button) {
-        case GLUT_RIGHT_BUTTON:
-            break;
         case GLUT_LEFT_BUTTON:
+            prev_mouse_pos.x = x;
+            prev_mouse_pos.y = y;
+            break;
+        case 3:
+            view.distance /= zoom_rate;
+            break;
+        case 4:
+            view.distance *= zoom_rate;
             break;
         }
         break;
@@ -148,8 +166,17 @@ static void mouse_func(int button, int state, int x, int y) {
 }
 
 static void motion_func(int x, int y) {
-    mouse_pos[0] = x;
-    mouse_pos[1] = y;
+    float delta_x = x - prev_mouse_pos.x;
+    float delta_y = y - prev_mouse_pos.y;
+
+    Point direction_up = view.rotation.rotate(Point(0, 1, 0));
+    Point direction_right = view.rotation.rotate(Point(0, 0, 1));
+       
+    view.rotation *= Quaternion(direction_up, -rotation_rate * delta_y / window_size)
+                   * Quaternion(direction_right, -rotation_rate * delta_x / window_size);
+
+    prev_mouse_pos.x = x;
+    prev_mouse_pos.y = y;
 }
 
 static void idle_func(void) {
@@ -159,18 +186,10 @@ static void idle_func(void) {
     delta_time = (glutGet(GLUT_ELAPSED_TIME) - time) / 1000.0f;
     time = glutGet(GLUT_ELAPSED_TIME);
 
-    constexpr float rotation_radius = 500.0f;
-    constexpr float direction_radius = 1.0f;
-
-    direction->x = direction_radius * sin(time / 1000);
-    direction->y = direction_radius * cos(time / 1000);
-    direction->z = direction_radius * cos(time / 2000);
-
-    printf(" [%f] ", direction->length());
-
-    origin->x = -rotation_radius * sin(time / 1000);
-    origin->y = -rotation_radius * cos(time / 1000);
-    origin->z = -rotation_radius * cos(time / 2000);
+    *host_data.direction = view.rotation.rotate(Point(1, 0, 0));
+    *host_data.direction /= host_data.direction->length();
+    *host_data.origin = -(*host_data.direction) * view.distance;
+    *host_data.origin *= view.distance / host_data.origin->length();
 
     cuda_compute_frame();
     glutPostRedisplay();
@@ -199,8 +218,8 @@ int main(int argc, char *argv[])
     glutCreateWindow("STL Renderer");
 
     glewInit();
-    glGenBuffers(1, &bufferObj);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, bufferObj);
+    glGenBuffers(1, &buffer_obj);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, buffer_obj);
     glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, window_size * window_size * 4, NULL, GL_DYNAMIC_DRAW_ARB);
 
     memset(&prop, 0, sizeof(cudaDeviceProp));
@@ -210,28 +229,28 @@ int main(int argc, char *argv[])
 
     HANDLE_ERROR(cudaGLSetGLDevice(dev));
 
-    HANDLE_ERROR(cudaGraphicsGLRegisterBuffer(&resource, bufferObj, cudaGraphicsRegisterFlagsWriteDiscard));
+    HANDLE_ERROR(cudaGraphicsGLRegisterBuffer(&opengl_resource, buffer_obj, cudaGraphicsRegisterFlagsWriteDiscard));
 
     HANDLE_ERROR(cudaMemcpyToSymbol(object, temp_object.data(), sizeof(Triangle) * min(max_triangles, temp_object.size())));
 
-    HANDLE_ERROR(cudaHostAlloc((void**)&triangles_count, sizeof(uint32_t), cudaHostAllocWriteCombined | cudaHostAllocMapped));
-    HANDLE_ERROR(cudaHostAlloc((void**)&origin, sizeof(Point), cudaHostAllocWriteCombined | cudaHostAllocMapped));
-    HANDLE_ERROR(cudaHostAlloc((void**)&direction, sizeof(Point), cudaHostAllocWriteCombined | cudaHostAllocMapped));
+    HANDLE_ERROR(cudaHostAlloc((void**)&host_data.triangles_count, sizeof(uint32_t), cudaHostAllocWriteCombined | cudaHostAllocMapped));
+    HANDLE_ERROR(cudaHostAlloc((void**)&host_data.origin, sizeof(Point), cudaHostAllocWriteCombined | cudaHostAllocMapped));
+    HANDLE_ERROR(cudaHostAlloc((void**)&host_data.direction, sizeof(Point), cudaHostAllocWriteCombined | cudaHostAllocMapped));
 
-    *triangles_count = min(max_triangles, temp_object.size());
-    printf("Triangles count: %d\n", *triangles_count);
+    *host_data.triangles_count = min(max_triangles, temp_object.size());
+    printf("Triangles count: %d\n", *host_data.triangles_count);
 
-    origin->x = 0;
-    origin->y = 0;
-    origin->z = 0;
+    host_data.origin->x = 0;
+    host_data.origin->y = 0;
+    host_data.origin->z = 0;
 
-    direction->x = 0;
-    direction->y = 0;
-    direction->z = 0;
+    host_data.direction->x = 0;
+    host_data.direction->y = 0;
+    host_data.direction->z = 0;
 
-    HANDLE_ERROR(cudaHostGetDevicePointer(&dev_triangles_count, triangles_count, 0));
-    HANDLE_ERROR(cudaHostGetDevicePointer(&dev_origin, origin, 0));
-    HANDLE_ERROR(cudaHostGetDevicePointer(&dev_direction, direction, 0));
+    HANDLE_ERROR(cudaHostGetDevicePointer(&device_data.triangles_count, host_data.triangles_count, 0));
+    HANDLE_ERROR(cudaHostGetDevicePointer(&device_data.origin, host_data.origin, 0));
+    HANDLE_ERROR(cudaHostGetDevicePointer(&device_data.direction, host_data.direction, 0));
 
     glutKeyboardFunc(key_func);
     glutDisplayFunc(draw_func);
