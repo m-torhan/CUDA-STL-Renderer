@@ -81,6 +81,11 @@ const Point Point::cross_product(const Point& other) const {
 	return Point(y * other.z - z * other.y, z * other.x - x * other.z, x * other.y - y * other.x);
 }
 
+
+__host__ __device__ float Point::cosine(const Point& other) const {
+	return this->dot_product(other) / (this->length() * other.length());
+}
+
 void Point::print() const {
 	printf("(%.3f, %.3f, %.3f)", x, y, z);
 }

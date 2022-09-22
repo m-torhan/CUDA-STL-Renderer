@@ -17,10 +17,10 @@
 #include "Point.cuh"
 #include "Quaternion.cuh"
 
-constexpr int window_size{ 768 };
+constexpr int window_size{ 512 };
 constexpr int max_fps{ 60 };
 
-constexpr float rotation_rate{ 2.0f };
+constexpr float rotation_rate{ 4.0f };
 constexpr float zoom_rate{ 1.2f };
 
 GLuint buffer_obj;
@@ -66,6 +66,8 @@ __global__ void ray_trace_kernel(uchar4 *pixel, uint32_t *triangles_count, Point
         direction_up * (x - window_size / 2) / window_size +
         direction_right * (window_size / 2 - y) / window_size;
 
+    Point light_direction = Point(1, 1, -1);
+
     ray_direction /= ray_direction.length();
 
     const Triangle *closest_triangle = nullptr;
@@ -82,10 +84,13 @@ __global__ void ray_trace_kernel(uchar4 *pixel, uint32_t *triangles_count, Point
     }
 
     if (nullptr != closest_triangle) {
+        float cosine = 0.5f + 0.5f * light_direction.cosine(closest_hit.normal);
+        cosine = 0.8f * powf(cosine, 2) + 0.2f * closest_hit.angle_cos;
+
         pixel[offset] = OBJECT_COLOR;
-        pixel[offset].x *= closest_hit.angle_cos;
-        pixel[offset].y *= closest_hit.angle_cos;
-        pixel[offset].z *= closest_hit.angle_cos;
+        pixel[offset].x *= cosine;
+        pixel[offset].y *= cosine;
+        pixel[offset].z *= cosine;
     }
     else {
         pixel[offset] = BACKGROUND_COLOR;

@@ -33,40 +33,15 @@ std::vector<Triangle> read_stl_binary(const std::string& filename) {
 	}
 
 	// move object to (0, 0, 0)
-	Point min_coords = triangles[0].a;
-	Point max_coords = triangles[0].a;
+	Point sum_coords{ 0.0f, 0.0f, 0.0f };
 
-	std::vector<Point> all_points;
-
-	for (auto triangle : triangles) {
-		all_points.push_back(triangle.a);
-		all_points.push_back(triangle.b);
-		all_points.push_back(triangle.c);
-	}
-
-	for (auto point : all_points) {
-		if (point.x < min_coords.x) {
-			min_coords.x = point.x;
-		}
-		if (point.y < min_coords.y) {
-			min_coords.y = point.y;
-		}
-		if (point.z < min_coords.z) {
-			min_coords.z = point.z;
-		}
-
-		if (point.x > min_coords.x) {
-			max_coords.x = point.x;
-		}
-		if (point.y > min_coords.y) {
-			max_coords.y = point.y;
-		}
-		if (point.z > min_coords.z) {
-			max_coords.z = point.z;
+	for (const Triangle& triangle : triangles) {
+		for (auto point : { triangle.a, triangle.b, triangle.c }) {
+			sum_coords += point;
 		}
 	}
 
-	Point mid_coords = (min_coords + max_coords) / 2;
+	Point mid_coords = sum_coords /= triangles.size() * 3;
 
 	for (Triangle& triangle : triangles) {
 		triangle.a.x -= mid_coords.x;

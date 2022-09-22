@@ -36,6 +36,7 @@ public:
 
 	__host__ __device__ float dot_product(const Point& other) const;
 	__host__ __device__ const Point cross_product(const Point& other) const;
+	__host__ __device__ float cosine(const Point& other) const;
 
 	__host__ __device__ void print() const;
 };
